@@ -1,0 +1,12 @@
+services:
+  platform:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cleverhome-platform
+    image: cleverhome-platform:p1a
+    ports:
+      - "9000:9000"
+    stdin_open: true
+    tty: true
+    restart: unless-stopped
