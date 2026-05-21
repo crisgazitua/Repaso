@@ -17,4 +17,4 @@ COPY src/ ./src/
 EXPOSE 9000
 
 # Run the platform.
-CMD ["python", "-m", "src.main"]
+ENTRYPOINT ["python", "-m", "src.main"]

@@ -2,7 +2,9 @@ import threading
 from src.Credentials.credential import Credential
 from src.Credentials.in_memory_credential_store import InMemoryCredentialStore
 from src.Server.tcp_server import CleverHomeTCPServer
-from src.UI.console_ui import ConsoleUI
+from src.UI.app import AppController
+from src.UI.house_service import HouseService
+from src.UI.screens.hubs_list import HubsListScreen
 
 
 def _build_credential_store() -> InMemoryCredentialStore:
@@ -22,10 +24,9 @@ def main() -> None:
 
     server_thread = threading.Thread(target=server.serve_forever, daemon=True)
     server_thread.start()
-    print("CleverHome TCP server listening on 0.0.0.0:9000")
-
-    ui = ConsoleUI(server=server, credential_store=credential_store)
-    ui.run()
+    service = HouseService(server)
+    controller = AppController(service=service, credential_store=credential_store)
+    controller.run(HubsListScreen(controller))
 
 
 if __name__ == "__main__":

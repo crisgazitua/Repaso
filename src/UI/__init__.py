@@ -1,3 +1,3 @@
 from src.UI.console_ui import ConsoleUI
 
-__all__ = ["ConsoleUI"]
+__all__ = ["AppController"]
