@@ -1,12 +1,32 @@
 from dataclasses import dataclass, field
 from typing import Literal
 
+from src.Protocol.constants import (
+    MSG_ACC,
+    MSG_ERR,
+    MSG_GS,
+    MSG_HL,
+    MSG_OK,
+    MSG_REF,
+    MSG_SS,
+    MSG_SU,
+)
+
 ParameterMap = dict[str, str]
 
-MessageType = Literal["HL", "GS", "SS", "ACC", "REF", "SU", "OK", "ERR"]
+MessageType = Literal[
+    "HL",
+    "GS",
+    "SS",
+    "ACC",
+    "REF",
+    "SU",
+    "OK",
+    "ERR",
+]
 
-REQUEST_TYPES: set[str] = {"HL", "GS", "SS"}
-RESPONSE_TYPES: set[str] = {"ACC", "REF", "SU", "OK", "ERR"}
+REQUEST_TYPES: set[str] = {MSG_HL, MSG_GS, MSG_SS}
+RESPONSE_TYPES: set[str] = {MSG_ACC, MSG_REF, MSG_SU, MSG_OK, MSG_ERR}
 
 
 @dataclass(frozen=True)

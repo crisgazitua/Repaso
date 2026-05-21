@@ -1,11 +1,11 @@
 from src.Credentials.credential_store import CredentialStore
-from src.Server.tcp_server import CleverHomeTCPServer, HubConnectionError
+from src.Server import CleverHomeProtocolHandler, HubConnectionError
 from src.UI.command import Command
 
 
 class ListHubsCommand(Command):
-    def __init__(self, server: CleverHomeTCPServer) -> None:
-        self._server = server
+    def __init__(self, handler: CleverHomeProtocolHandler) -> None:
+        self._handler = handler
 
     @property
     def name(self) -> str:
@@ -16,7 +16,7 @@ class ListHubsCommand(Command):
         return "List all currently connected hubs."
 
     def execute(self, arguments: list[str]) -> str:
-        hubs = self._server.list_connected_hubs()
+        hubs = self._handler.list_connected_hubs()
         if not hubs:
             return "No hubs are currently connected."
         lines = ["Connected hubs:"]
@@ -26,8 +26,8 @@ class ListHubsCommand(Command):
 
 
 class StatusCommand(Command):
-    def __init__(self, server: CleverHomeTCPServer) -> None:
-        self._server = server
+    def __init__(self, handler: CleverHomeProtocolHandler) -> None:
+        self._handler = handler
 
     @property
     def name(self) -> str:
@@ -35,34 +35,31 @@ class StatusCommand(Command):
 
     @property
     def description(self) -> str:
-        return "Get the current state of a hub. Usage: status <home_name>"
+        return "Get domain state view. Usage: status <home_name>"
 
     def execute(self, arguments: list[str]) -> str:
         if len(arguments) != 1:
             return "Usage: status <home_name>"
 
         home_name = arguments[0]
-        hub = self._server.get_hub(home_name)
+        hub = self._handler.get_hub(home_name)
         if hub is None:
             return f"No connected hub named '{home_name}'."
 
         try:
-            state = hub.send_get_state()
+            lines = hub.describe_state()
         except HubConnectionError as exc:
             return f"Failed to query hub '{home_name}': {exc}"
 
-        if not state:
+        if not lines:
             return f"Hub '{home_name}' returned no state."
 
-        lines = [f"State of '{home_name}':"]
-        for key in sorted(state.keys()):
-            lines.append(f"  {key} = {state[key]}")
-        return "\n".join(lines)
+        return "\n".join([f"State of '{home_name}':", *[f"  {line}" for line in lines]])
 
 
 class SetStateCommand(Command):
-    def __init__(self, server: CleverHomeTCPServer) -> None:
-        self._server = server
+    def __init__(self, handler: CleverHomeProtocolHandler) -> None:
+        self._handler = handler
 
     @property
     def name(self) -> str:
@@ -71,38 +68,59 @@ class SetStateCommand(Command):
     @property
     def description(self) -> str:
         return (
-            "Set one or more state values on a hub. "
-            "Usage: set <home_name> <KEY>=<VALUE> [<KEY>=<VALUE> ...]"
+            "Apply domain action. Usage: set <home> light <i> <on|off> | "
+            "door <i> <lock|unlock> | alarm <arm|disarm> | hvac <heat|cool|idle>"
         )
 
     def execute(self, arguments: list[str]) -> str:
-        if len(arguments) < 2:
-            return "Usage: set <home_name> <KEY>=<VALUE> [<KEY>=<VALUE> ...]"
+        if len(arguments) < 3:
+            return (
+                "Usage: set <home> light <i> <on|off> | door <i> <lock|unlock> | "
+                "alarm <arm|disarm> | hvac <heat|cool|idle>"
+            )
 
         home_name = arguments[0]
-        updates: dict[str, str] = {}
-        for token in arguments[1:]:
-            if "=" not in token:
-                return f"Invalid update '{token}'. Expected format KEY=VALUE."
-            key, value = token.split("=", 1)
-            if not key or not value:
-                return f"Invalid update '{token}'. Expected format KEY=VALUE."
-            updates[key] = value
-
-        hub = self._server.get_hub(home_name)
+        action = arguments[1].lower()
+        hub = self._handler.get_hub(home_name)
         if hub is None:
             return f"No connected hub named '{home_name}'."
 
         try:
-            accepted = hub.send_set_state(updates)
+            if action == "light" and len(arguments) == 4:
+                index = int(arguments[2])
+                value = arguments[3].lower()
+                if value not in {"on", "off"}:
+                    return "Light value must be 'on' or 'off'."
+                accepted = hub.set_light(index, value == "on")
+            elif action == "door" and len(arguments) == 4:
+                index = int(arguments[2])
+                value = arguments[3].lower()
+                if value not in {"lock", "unlock"}:
+                    return "Door value must be 'lock' or 'unlock'."
+                accepted = hub.set_door_lock(index, value == "lock")
+            elif action == "alarm" and len(arguments) == 3:
+                value = arguments[2].lower()
+                if value not in {"arm", "disarm"}:
+                    return "Alarm value must be 'arm' or 'disarm'."
+                accepted = hub.set_alarm(value == "arm")
+            elif action == "hvac" and len(arguments) == 3:
+                mode = arguments[2].lower()
+                if mode not in {"heat", "cool", "idle"}:
+                    return "HVAC mode must be 'heat', 'cool', or 'idle'."
+                accepted = hub.set_hvac_mode(mode)
+            else:
+                return (
+                    "Usage: set <home> light <i> <on|off> | door <i> <lock|unlock> | "
+                    "alarm <arm|disarm> | hvac <heat|cool|idle>"
+                )
+        except ValueError:
+            return "Index must be an integer."
         except HubConnectionError as exc:
-            return f"Failed to send set-state to hub '{home_name}': {exc}"
-        except ValueError as exc:
-            return f"Invalid request: {exc}"
+            return f"Failed to update hub '{home_name}': {exc}"
 
         if accepted:
-            return f"Hub '{home_name}' accepted the new state."
-        return f"Hub '{home_name}' rejected the new state (ERR)."
+            return f"Hub '{home_name}' accepted the update."
+        return f"Hub '{home_name}' rejected the update (ERR)."
 
 
 class ListCredentialsCommand(Command):
@@ -123,9 +141,7 @@ class ListCredentialsCommand(Command):
             return "No credentials registered."
 
         lines = ["Registered credentials:"]
-        for credential in sorted(
-            credentials, key=lambda c: (c.username, c.home_name)
-        ):
+        for credential in sorted(credentials, key=lambda c: (c.username, c.home_name)):
             masked = "*" * len(credential.password)
             lines.append(
                 f"  - username={credential.username}  "

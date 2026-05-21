@@ -1,5 +1,5 @@
 from src.Credentials.credential_store import CredentialStore
-from src.Server.tcp_server import CleverHomeTCPServer
+from src.Server import CleverHomeProtocolHandler
 from src.UI.command import Command
 from src.UI.commands import (
     HelpCommand,
@@ -14,22 +14,21 @@ from src.UI.commands import (
 class ConsoleUI:
     def __init__(
         self,
-        server: CleverHomeTCPServer,
+        handler: CleverHomeProtocolHandler,
         credential_store: CredentialStore,
     ) -> None:
-        self._server = server
+        self._handler = handler
         self._credential_store = credential_store
         self._commands: dict[str, Command] = {}
         self._register_default_commands()
 
     def _register_default_commands(self) -> None:
-        list_hubs = ListHubsCommand(self._server)
-        status = StatusCommand(self._server)
-        set_state = SetStateCommand(self._server)
+        list_hubs = ListHubsCommand(self._handler)
+        status = StatusCommand(self._handler)
+        set_state = SetStateCommand(self._handler)
         list_credentials = ListCredentialsCommand(self._credential_store)
         quit_cmd = QuitCommand()
 
-        # Help receives the list of all other commands so it can describe them.
         help_cmd = HelpCommand(
             [list_hubs, status, set_state, list_credentials, quit_cmd]
         )
@@ -50,7 +49,7 @@ class ConsoleUI:
             try:
                 raw = input("cleverhome> ").strip()
             except (EOFError, KeyboardInterrupt):
-                print()  # newline after ^C / ^D
+                print()
                 break
 
             if not raw:

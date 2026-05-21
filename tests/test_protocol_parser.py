@@ -34,13 +34,13 @@ def test_parse_ss_readonly_ps_fails() -> None:
         parse_message("SS:PS1=1.")
 
 
-def test_parse_ss_valid() -> None:
-    msg = parse_message("SS:DS1=1;LS1=0;AS=1.")
+def test_parse_ss_valid_with_zero_index() -> None:
+    msg = parse_message("SS:DS0=1;LS1=0;AS=1.")
     assert msg.message_type == "SS"
 
 
 def test_parse_su_valid() -> None:
-    msg = parse_message("SU:TR=20;DS1=1;PS1=0;AS=1;AO=0;HS=1;CS=0.")
+    msg = parse_message("SU:TR=20;DS0=1;PS1=0;AS=1;AO=0;HS=1;CS=0.")
     assert msg.message_type == "SU"
 
 

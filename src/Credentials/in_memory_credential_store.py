@@ -1,9 +1,10 @@
-from src.Credentials.credential import Credential
+from src.Credentials.credential import HubCredential
 from src.Credentials.credential_store import CredentialStore
 
+
 class InMemoryCredentialStore(CredentialStore):
-    def __init__(self, initial_credentials: list[Credential] | None = None) -> None:
-        self._credentials: dict[tuple[str, str], Credential] = {}
+    def __init__(self, initial_credentials: list[HubCredential] | None = None) -> None:
+        self._credentials: dict[tuple[str, str], HubCredential] = {}
         if initial_credentials is not None:
             for credential in initial_credentials:
                 key = (credential.username, credential.home_name)
@@ -16,5 +17,5 @@ class InMemoryCredentialStore(CredentialStore):
             return False
         return stored.password == password
 
-    def list_credentials(self) -> list[Credential]:
+    def list_credentials(self) -> list[HubCredential]:
         return list(self._credentials.values())

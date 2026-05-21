@@ -73,15 +73,20 @@ Justification: The platform will manage real homes with sensitive data (door loc
 
 **QAS 2 - Maintainability/Modifiability**:
 
-Aspect:    Description
+Aspect:           Description
 
-Source: Development team
-Stimulus: Replace in-memory credential store with an external database (e.g., PostgreSQL)Artifact: Credential Store module
-Environment: Development time
-Response: The change is made by modifying only the concrete implementation of the credential store interface, without altering the TCP Server, Console UI, or any other module
-Response Measure: The change requires modification of at most 1 module and takes no more than 4 hours of development effort
+Source:           Development team
+Stimulus:         Replace the in-memory credential store with an external database (e.g., PostgreSQL)
+Artifact:         Credential Store module
+Environment:      Development time
 
-Justification: The project description explicitly states that the credential store will be migrated to a more scalable method with external storage in the future. Designing for maintainability here ensures that this planned change does not cascade through the system, keeping maintenance costs low and enabling independent evolution of the storage layer.
+Response:         The change is implemented by adding a new concrete implementation of the existing CredentialStore interface, without altering the TCP Server, TUI, Protocol Codec, or Domain layer.
+
+Response Measure: Source code changes are confined to the src/Credentials/ package. A new file is added (e.g., postgres_credential_store.py) implementing the existing CredentialStore interface, with zero modifications in src/Server/, src/Protocol/, src/Domain/, or src/UI/. Exactly one line changes in src/main.py to select the new implementation. Zero modifications to existing tests; new integration tests are added only for the new adapter. Configuration files (requirements.txt, docker-compose.yml, .env.example) are updated as needed; these are treated as infrastructure dependencies, not design-level changes.
+
+Justification:    The project description explicitly states that the credential store will be migrated to external storage in the future. This QAS enforces the Dependency Inversion Principle: the rest of the codebase depends on the abstract CredentialStore interface, not on its concrete implementation, so swapping the underlying storage has no propagation effect through the system. This keeps maintenance costs low and enables independent evolution of the storage layer. The QAS is empirically validated by the PostgreSQL implementation delivered as part of the P1B bonus, which required exactly the changes described above.
+
+> **Note:** This QAS received full marks in P1A. The Response Measure was voluntarily improved in P1B to be more precise and objectively verifiable — replacing the original time-based metric with concrete, code-level constraints that can be confirmed directly from the diff. The core scenario and justification remain unchanged.
 
 
 ### Technical Constraints
@@ -106,20 +111,23 @@ Justification: The platform must implement this exact text-based protocol over T
 The domain model represents the problem space of the CleverHome Platform from a business perspective. The platform enables users to remotely monitor and control smart devices installed in their homes. Each home has a single CleverHub — a hardware controller that acts as the sole communication bridge between the platform and the devices inside the house. The platform never interacts directly with any smart device; all communication flows through the CleverHub.
 Smart devices are categorized into two families: sensors, which are read-only and report environmental data, and actuators, which can be controlled remotely to perform physical actions. The platform also keeps a historical log of sensor readings and actions performed on each house.
 
-**DescriptionCleverHomePlatform**: The central system that manages houses and authenticates users
+**CleverHome Platform**: The central system that manages houses and authenticates users
 
 **User**: A person who accesses the platform to monitor and control their homes
 
-**House**: A registered home in the platform, associated with users and one CleverHubC
+**House**: A registered home in the platform, associated with users and one CleverHub
 
 **CleverHub**: The hardware controller in each house that bridges the platform and the devices
 
 **Log**: A historical record of sensor readings and actions performed on a house
 
 **SmartDevice**: A general entity representing any device connected to a CleverHub
+
 **Sensor**: A read-only device that reports data (TemperatureSensor, ProximitySensor)
+
 **Actuator**: A controllable device that executes actions (SmartLight, DoorLock, Alarm, HVAC)
-<!-- TODO: Diagram for the domain model, with explanations as needed. -->
+
+> **Note:** The professor flagged the device hierarchy as "on edge" since smart devices are mostly an implementation detail abstracted away by the CleverHub team. We chose to keep the model as is because it received full marks in P1A and the entities are still conceptually valid at the domain level — they represent the types of devices the platform is designed to understand and control, even if the CleverHub mediates all direct communication with them.
 
 ---
 
@@ -134,26 +142,29 @@ Smart devices are categorized into two families: sensors, which are read-only an
 
 ### C4 Containers Diagram
 
-![Containers Diagram](docs/images/c4_containers.png)
+![Containers Diagram](docs/images/c4_containers2.png)
 
-The system is divided into three containers, all running within the same Python process:
-- **Console UI**: handles all user interaction, forwarding commands to the TCP Server.
-- **TCP Server & Protocol Handler**: manages CleverHub connections and encodes/decodes all protocol messages.
-- **In-Memory Credential Store**: stores pre-defined hub credentials and validates them on connection. Isolated behind an interface so it can be replaced with a database-backed store in the future without modifying any other container. It is represented as a data store (cylinder) because its role is logically equivalent to a database, it is the authoritative source of credential data, and it is explicitly designed to be swapped for an external database in a future iteration.
+The system contains two containers:
+- **CleverHome Platform Application** [Container: Python]: the main application process. Runs the TCP server and the Console UI (TUI) in the same process. Accepts incoming CleverHub connections, performs the authentication handshake, and exposes commands to the operator via terminal.
+- **Credentials Database** [Container: PostgreSQL 16]: stores known CleverHubs, their associated houses, and user credentials. Accessed by the application via SQL/TCP.
+
+The **CleverHub** and the **Home Owner** are external to the platform — the CleverHub connects over TCP/IP using the custom text protocol, and the Home Owner interacts through the terminal.
+
+> **Note (P1B correction):** The P1A version of this diagram incorrectly showed the Console UI and the In-Memory Credential Store as separate containers. Following feedback, this was corrected. In C4, a container is a separately deployable/runnable unit. The UI and the TCP server run in the same Python process — they are not separate containers. The credential store has been moved to a real external container (PostgreSQL), which correctly justifies the cylinder shape in the diagram.
 
 ### UML Sequence Diagrams
 
-**Authentication Flow** — shows how a CleverHub connects and authenticates against the platform.
+**Authentication Flow** — shows how a CleverHub connects and authenticates against the platform. The TCP Server buffers the incoming message until the terminator, then delegates to the Protocol Handler, which uses the Codec to parse the HL message and validates credentials against the Credential Store. Three outcomes are shown: invalid credentials (REF), duplicate home name (REF), and successful authentication (ACC), after which the TCP connection persists.
 
-![Authentication Flow](docs/images/Authentication_flow.png)
+![Authentication Flow](docs/images/Authentication_flow2.png)
 
-**Monitoring Flow** — shows how the platform requests and receives the state of a house.
+**Monitoring Flow** — shows how the platform operator requests the current state of a connected house. The TUI calls HouseService, which asks the Protocol Handler for the local state. The handler reads from HouseRegistry (the platform's in-memory state model) and returns it as a Message(SU). HouseService then converts the wire-format state map into a House domain object via `_dict_to_house` and the TUI renders it. No TCP message is sent to the real CleverHub — state is managed locally by the platform.
 
-![Monitoring Flow](docs/images/Monitor_flow.png)
+![Monitoring Flow](docs/images/Monitoring_flow2.png)
 
-**Control Flow** — shows how the platform sends commands to a house and handles success or failure.
+**Control Flow** — shows how the platform operator sets state on a connected house. The TUI calls HouseService, which sends a Message(SS) to the Protocol Handler. The handler applies the update through HouseRegistry, which delegates to the House domain entity. House uses DeviceFactory (Simple Factory pattern) to instantiate the concrete device object (Light, DoorLock, or ProximitySensor). On success the handler returns Message(OK) and the TUI refreshes; on failure it returns Message(ERR). The same flow applies to DOOR_LOCK and PROXIMITY_SENSOR — note that ProximitySensor is read-only in production; the simulator allows forcing its value for testing purposes.
 
-![Control Flow](docs/images/Control_flow.png)
+![Control Flow](docs/images/Control_flow2.png)
 
 ### Program Structure
 
