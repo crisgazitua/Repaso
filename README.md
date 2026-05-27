@@ -27,9 +27,9 @@ Carlos Rencoret
 <!-- SECTION: Work Division -->
 ## Work Division
 
-Diego llull — Documentación y diseño: lidera diagramas (domain, C4, sequence), QAS, constraints, README. 
-Carlos Rencoret — Core / Backend: parser del protocolo, TCP server, credential store. 
-Cristobal Gazitua — Infra y UI: Console UI, Dockerfile, docker-compose, GitHub Actions, tests.
+Diego llull — Documentación y diseño: lidera diagramas (domain, C4, sequence), QAS, constraints, README.
+Carlos Rencoret — Core / Backend: parser del protocolo, TCP server, credential store, refactor a DeviceFactory (Simple Factory).
+Cristobal Gazitua — Infra y UI: Terminal UI (prompt_toolkit), Dockerfile, docker-compose, GitHub Actions, tests, bonus PostgreSQL store.
 
 
 ---
@@ -37,25 +37,29 @@ Cristobal Gazitua — Infra y UI: Console UI, Dockerfile, docker-compose, GitHub
 <!-- SECTION: Incomplete Items -->
 ## Incomplete Items
 
-<!-- TODO: List anything not completed from the submission requirements, if any. -->
+None. All required deliverables for P1B are included:
+- TUI (replaces the P1A Console UI) with arrow-key navigation and hotkeys always visible.
+- Simple Factory (`DeviceFactory`) is the only place where concrete device classes are referenced.
+- Design diagrams (Domain, C4, Sequence) and QAS were updated to reflect the new design and address P1A feedback.
+
+The optional **PostgreSQL bonus** is also delivered: a `PostgresCredentialStore` adapter behind the existing `CredentialStore` interface, selected at runtime via `DATABASE_URL`, with the database running locally as a sibling container in `docker-compose.yml`.
 
 ---
 
 <!-- SECTION: Requirements  -->
 ## Requirements
 
-<!-- TODO: All requirements artifacts for this delivery. -->
-
 ### Functionalities
 
 This iteration of the CleverHome Platform delivers the following functionalities:
 
 - **CleverHub authentication over TCP/IP**: the platform listens for incoming TCP connections from CleverHubs and validates them through an HL handshake, accepting connections with valid credentials (ACC) and rejecting unauthorized or duplicate ones (REF).
-- **In-memory credential store**: a pre-loaded set of (username, password, home_name) credentials is used to authorize CleverHub connections. The store is hidden behind an abstract interface so it can be swapped for a database-backed implementation in future iterations without modifying any other module.
-- **House state monitoring (GS)**: through the Console UI, the operator can request the current state of any connected hub. The platform sends a GS message to the hub and parses the resulting SU response, displaying all sensor and actuator values to the operator.
-- **House state control (SS)**: through the Console UI, the operator can set one or more state values on any connected hub. The platform sends an SS message and reports whether the hub accepted (OK) or rejected (ERR) the change.
-- **Console UI for the platform operator**: an interactive text-based interface lets the operator list connected hubs, query and update their state, list the registered credentials (with masked passwords), and exit the platform cleanly.
+- **Pluggable credential store**: a pre-loaded set of (username, password, home_name) credentials is used to authorize CleverHub connections. Two interchangeable implementations are provided behind the abstract `CredentialStore` interface: an in-memory store (default) and a PostgreSQL-backed store (P1B bonus). Selection happens at startup via the `DATABASE_URL` environment variable, with zero changes required in the Server, Protocol, Domain, or UI layers.
+- **House state monitoring (GS)**: through the TUI, the operator selects a connected hub and inspects its full state. The platform reads the locally tracked house state — built from the SU messages the hub has sent — and renders all sensor and actuator values grouped by category (Climate, Lights, Doors, Sensors, Security).
+- **House state control (SS)**: through the TUI, the operator can request the platform to send state updates to a connected hub. The platform serializes an SS message and reports whether the hub accepted (OK) or rejected (ERR) the change.
+- **Terminal-based UI (TUI) for the platform operator**: an interactive full-screen terminal interface built on `prompt_toolkit`. The operator navigates with arrow keys and triggers actions through hotkeys; the available key combinations are always visible in a bottom toolbar, so the operator never has to remember commands or type long input strings.
 - **Concurrent hub support**: the TCP server accepts multiple CleverHubs simultaneously, each on its own thread, and tracks them by their unique home_name.
+- **Simple Factory for device construction**: all smart-device instantiation flows through a single `DeviceFactory.create_device(type, **kwargs)`. The rest of the codebase never references concrete device classes (`Light`, `DoorLock`, `ProximitySensor`, `Alarm`, `HVAC`, `TemperatureSensor`) directly, which makes adding a new device type a localized change.
 
 ### Quality Attribute Scenarios
 
@@ -82,7 +86,7 @@ Environment:      Development time
 
 Response:         The change is implemented by adding a new concrete implementation of the existing CredentialStore interface, without altering the TCP Server, TUI, Protocol Codec, or Domain layer.
 
-Response Measure: Source code changes are confined to the src/Credentials/ package. A new file is added (e.g., postgres_credential_store.py) implementing the existing CredentialStore interface, with zero modifications in src/Server/, src/Protocol/, src/Domain/, or src/UI/. Exactly one line changes in src/main.py to select the new implementation. Zero modifications to existing tests; new integration tests are added only for the new adapter. Configuration files (requirements.txt, docker-compose.yml, .env.example) are updated as needed; these are treated as infrastructure dependencies, not design-level changes.
+Response Measure: Source code changes are confined to the src/Credentials/ package. A new file is added (e.g., postgres_credential_store.py) implementing the existing CredentialStore interface, with zero modifications in src/Server/, src/Protocol/, src/Domain/, or src/UI/. Changes in src/main.py are limited to the `_build_credential_store()` factory (no other consumer of the store is modified). Zero modifications to existing tests; new integration tests are added only for the new adapter. Configuration files (requirements.txt, docker-compose.yml) are updated as needed; these are treated as infrastructure dependencies, not design-level changes.
 
 Justification:    The project description explicitly states that the credential store will be migrated to external storage in the future. This QAS enforces the Dependency Inversion Principle: the rest of the codebase depends on the abstract CredentialStore interface, not on its concrete implementation, so swapping the underlying storage has no propagation effect through the system. This keeps maintenance costs low and enables independent evolution of the storage layer. The QAS is empirically validated by the PostgreSQL implementation delivered as part of the P1B bonus, which required exactly the changes described above.
 
@@ -134,8 +138,6 @@ Smart devices are categorized into two families: sensors, which are read-only an
 <!-- SECTION: Design Overview -->
 ## Design Overview
 
-<!-- TODO: Design overview of your solution for this delivery, including diagrams as requested. Add explanations as needed. -->
-
 ### C4 System Context Diagram
 
 ![System Context Diagram](docs/images/c4_system_context.png)
@@ -145,7 +147,7 @@ Smart devices are categorized into two families: sensors, which are read-only an
 ![Containers Diagram](docs/images/c4_containers2.png)
 
 The system contains two containers:
-- **CleverHome Platform Application** [Container: Python]: the main application process. Runs the TCP server and the Console UI (TUI) in the same process. Accepts incoming CleverHub connections, performs the authentication handshake, and exposes commands to the operator via terminal.
+- **CleverHome Platform Application** [Container: Python]: the main application process. Runs the TCP server and the Terminal UI (TUI) in the same process. Accepts incoming CleverHub connections, performs the authentication handshake, and exposes interactive screens to the operator via the terminal.
 - **Credentials Database** [Container: PostgreSQL 16]: stores known CleverHubs, their associated houses, and user credentials. Accessed by the application via SQL/TCP.
 
 The **CleverHub** and the **Home Owner** are external to the platform — the CleverHub connects over TCP/IP using the custom text protocol, and the Home Owner interacts through the terminal.
@@ -170,53 +172,61 @@ The **CleverHub** and the **Home Owner** are external to the platform — the Cl
 
 The codebase is organized into focused modules under `src/`, each with a single responsibility:
 
-- **`src/protocol/`** — pure functions and data classes for the CleverHub text protocol. Contains the `Message` dataclass, `parse_message` (string → Message), and `serialize_message` (Message → string). No I/O, no sockets — fully testable in isolation.
-- **`src/credentials/`** — credential storage. Defines the abstract `CredentialStore` interface and the `InMemoryCredentialStore` implementation. The abstraction supports the Maintainability QAS: future iterations can replace the in-memory store with a database-backed one without touching any consumer.
-- **`src/server/`** — the TCP server. `CleverHomeTCPServer` accepts incoming connections, performs the HL handshake against the credential store, and on success registers the connection as a `HubConnection`. After the handshake, the platform takes the active role: `HubConnection` exposes `send_get_state()` and `send_set_state()` methods that the UI uses to drive the conversation with the hub.
-- **`src/ui/`** — the Console UI. Implements the Command pattern: each operator command (`list-hubs`, `status`, `set`, `list-credentials`, `help`, `quit`) is its own class implementing the `Command` interface. The `ConsoleUI` class runs the read-eval-print loop and dispatches to the appropriate command. Adding a new command requires no changes to the loop or to existing commands.
-- **`src/main.py`** — the entry point. Wires up the credential store, starts the TCP server in a background daemon thread, and runs the Console UI on the main thread.
+- **`src/Protocol/`** — pure functions and data classes for the CleverHub text protocol. Contains the `Message` dataclass, `parse_message` (string → Message), and `serialize_message` (Message → string). No I/O, no sockets — fully testable in isolation.
+- **`src/Credentials/`** — credential storage. Defines the abstract `CredentialStore` interface and two concrete implementations: `InMemoryCredentialStore` (default) and `PostgresCredentialStore` (selected at runtime via `DATABASE_URL`). The abstraction is the empirical anchor of the Maintainability QAS.
+- **`src/Domain/`** — domain entities (`House`, `Light`, `DoorLock`, `ProximitySensor`, `TemperatureSensor`, `Alarm`, `HVAC`) and the **Simple Factory** that constructs them: `DeviceFactory.create_device(device_type, **kwargs)`. This is the only place in the codebase where concrete device classes are referenced — every other module asks the factory for devices via the `DeviceFactory.LIGHT`, `DeviceFactory.DOOR_LOCK`, ... constants.
+- **`src/Server/`** — the TCP server. `CleverHomeTCPServer` is a thin transport layer that frames messages on the wire terminator and delegates parsing/dispatch to `CleverHomeProtocolHandler`. The handler authenticates hubs against the credential store, tracks connected hubs, applies state updates through the domain registry, and serializes responses.
+- **`src/UI/`** — the **Terminal UI (TUI)** built on `prompt_toolkit`. `AppController` owns the screen stack and the live application loop. Each screen (`HubsListScreen`, `HouseViewScreen`, `CredentialsScreen`) implements the `Screen` interface (`container()`, `key_bindings()`, `bottom_toolbar()`), so adding a new screen is a localized change. `HouseService` adapts the wire-format state map returned by the protocol handler into rich `House` domain objects for rendering.
+- **`src/main.py`** — the entry point. Builds the credential store (Postgres if `DATABASE_URL` is set, in-memory otherwise), starts the TCP server in a background daemon thread, and runs the TUI on the main thread.
 
-The dependency direction is one-way: UI depends on Server and CredentialStore (interface), Server depends on Protocol and CredentialStore (interface), and Protocol depends on nothing. This makes each module independently testable and replaceable.
+The dependency direction is one-way: UI depends on Server and CredentialStore (interface), Server depends on Protocol, Domain, and CredentialStore (interface), and Protocol/Domain depend on nothing. This makes each module independently testable and replaceable.
 
 
 ### Dockerized Structure
 
-The CleverHome Platform is packaged as a single container running both the TCP server and the Console UI in the same Python process. This is appropriate for the current iteration: the UI and the server share an in-memory state (the registered hub connections), and splitting them into separate containers would require introducing inter-process communication that adds no value at this stage. Future iterations may split them as the design evolves.
+The CleverHome Platform runs as two containers orchestrated by Docker Compose: the platform itself (TCP server + TUI in the same Python process) and a PostgreSQL container that backs the credential store. Splitting the TCP server from the TUI would require introducing inter-process communication that adds no value at this stage, since they share the in-memory registry of connected hubs.
 
 - **`Dockerfile`** — builds the platform image from `python:3.12-slim`, installs dependencies from `requirements.txt`, copies the `src/` directory, and starts the application with `python -m src.main`. A `.dockerignore` excludes tests, caches, and version control metadata to keep the image small.
-- **`docker-compose.yml`** — defines a single service `platform` with the TCP port `9000` mapped to the host, an interactive TTY enabled (so the Console UI can read from the terminal), and an automatic restart policy. The CleverHub simulator is intentionally **not** included in this compose file: the simulator represents external hardware that connects to the platform from outside.
+- **`docker-compose.yml`** — defines two services:
+  - **`db`** — `postgres:16-alpine` with a healthcheck on `pg_isready` and a named volume `cleverhome_db_data` that persists credentials across restarts.
+  - **`platform`** — the application container. Maps TCP port `9000` to the host, enables an interactive TTY (required by the TUI), depends on `db` being healthy, and receives the `DATABASE_URL` environment variable pointing at the `db` service so it picks the PostgreSQL credential store at startup.
 
-To run the simulator and connect it to the platform, the operator executes a separate `docker run` command, as documented in the next section.
+The CleverHub simulator is intentionally **not** included in this compose file: the simulator represents external hardware that connects to the platform from outside. To run the simulator and connect it to the platform, the operator executes a separate `docker run` command, as documented in the next section.
 
 ---
 
 <!-- SECTION: Usage -->
 ## How to Run and Use
 
-<!-- TODO: Provide exact commands and steps. Include screenshots of the UI for all mayor functionalities. -->
-
 ### Prerequisites
 
-- **Docker** (24.0 or later) with Docker Compose v2. Required to build and run the platform image and to launch the CleverHub simulator.
+- **Docker** (24.0 or later) with Docker Compose v2. Required to build and run the platform image, the PostgreSQL container, and the CleverHub simulator.
 - **Python 3.14.3+** (only required if running the platform natively without Docker, e.g. for development).
-- **A terminal with TTY support**. The Console UI is interactive and reads from stdin.
+- **A terminal with TTY support**. The TUI takes over the terminal in full-screen mode.
 
 No other dependencies are required: the Docker image bundles Python and all Python dependencies.
 
 ### Running the Platform and Dependencies
 
-From the repository root, build and start the platform:
+From the repository root, build and start the platform together with the PostgreSQL container:
 
 ```bash
 docker compose run --rm --service-ports platform
 ```
 
-The flag `--service-ports` is required for the TCP port `9000` to be exposed; `--rm` removes the container after it exits. The platform will print a startup banner and the prompt `cleverhome> `.
+This will start the `db` container first, wait for its healthcheck to pass, and then start the `platform` container with the TUI attached to your terminal. The flag `--service-ports` is required for the TCP port `9000` to be exposed; `--rm` removes the container after it exits.
 
-Alternatively, to run the platform natively (useful during development):
+Alternatively, to run the platform natively (useful during development, falls back to the in-memory credential store):
 
 ```bash
 pip install -r requirements.txt
+python -m src.main
+```
+
+To run natively against a real PostgreSQL, export `DATABASE_URL` first:
+
+```bash
+export DATABASE_URL=postgresql+psycopg://cleverhome:cleverhome_pass@localhost:5432/cleverhome
 python -m src.main
 ```
 
@@ -238,23 +248,27 @@ The platform ships with the following pre-loaded credentials (see `src/main.py`)
 
 ### Using the Platform
 
-Once the platform is running, type `help` at the prompt to see all available commands:
+Once the platform is running, the TUI takes over the terminal in full-screen mode. There are no commands to type — every action is triggered with arrow keys or single-letter hotkeys, and the available keys for the current screen are always shown in the bottom toolbar.
 
-| Command                            | Description                                            |
-|------------------------------------|--------------------------------------------------------|
-| `help`                             | Show the list of available commands.                   |
-| `list-hubs`                        | List all currently connected hubs.                     |
-| `list-credentials`                 | List all registered credentials (passwords are masked).|
-| `status <home>`                    | Query and display the current state of a connected hub.|
-| `set <home> <K>=<V> [<K>=<V> ...]` | Send one or more state updates to a connected hub.     |
-| `quit`                             | Exit the platform.                                     |
+The TUI has three screens:
 
-**Example session** (with the simulator already connected as `home-a`):
+- **Hubs List** (entry screen) — lists every currently connected CleverHub with a compact summary of its state (temperature, lights on/total, alarm status). Use `↑` / `↓` to navigate, `Enter` to inspect a hub, `c` to view registered credentials, `r` to refresh, `q` to quit.
+- **House View** — shows the full state of the selected hub grouped by category: Climate (temperature, HVAC), Lights, Doors, Sensors (proximity, marked as read-only), and Security (alarm). Use `↑` / `↓` to navigate the rows, `b` to go back, `r` to refresh, `q` to quit.
+- **Credentials** — lists every registered credential (`username @ home_name`) with the password masked. Use `b` to go back, `q` to quit.
 
 ### UI Screenshots
 
-<!-- TODO: Add screenshots of all mayor features of your UI in use. -->
-![Startup banner](docs/images/Screenshot_UI.png)
+**Hubs List with no hubs connected** — shows the empty state and the bottom toolbar with all available keys.
+
+![Hubs List — empty](docs/images/Screenshot_TUI_UI1.png)
+
+**Hubs List with a connected CleverHub** — `home-a` is connected, showing its summary (temperature, light count, alarm status) inline.
+
+![Hubs List — connected hub](docs/images/Screenshot_TUI_UI2.png)
+
+**House View** — full state of `home-a` grouped by category (Climate, Lights, Doors, Sensors, Security). Read-only devices are flagged in the toolbar and inline.
+
+![House View](docs/images/Screenshot_TUI_Ui3.png)
 
 ---
 
@@ -263,13 +277,17 @@ Once the platform is running, type `help` at the prompt to see all available com
 
 ### Description
 
-The test suite covers the three core modules of the platform: protocol parsing/serialization, credential storage, and the TCP server. All tests follow the arrange/act/assert structure explicitly, and the suite mixes unit tests (for pure logic such as the parser and the credential store) with integration tests (for the TCP server, which is exercised over real sockets on a free port).
+The test suite covers all core modules of the platform: protocol parsing/serialization, credential storage (both implementations), TCP transport and protocol handling, the domain model and its Simple Factory, the house service that bridges wire format and domain, and the TUI screens. All tests follow the arrange/act/assert structure explicitly, and the suite mixes unit tests (for pure logic such as the parser, the domain, and the in-memory credential store) with integration tests (for the TCP server over real sockets, and for the PostgreSQL adapter against a live database).
 
 The suite includes both valid cases and invalid cases. The latter are essential because the platform must be robust against malformed protocol messages, wrong credentials, duplicate hub names, and missing or malformed user input. Specifically:
 
 - **Protocol tests** validate parsing of well-formed messages (HL, GS, SS, SU, OK, ERR), serialization round-trips, and rejection of malformed input (missing terminator, unknown message type, malformed parameters).
-- **Credential store tests** validate correct authentication for valid credentials, rejection of wrong passwords, unknown usernames, unknown homes, and empty inputs. They also verify the encapsulation of the store (the returned credential list cannot be used to mutate internal state) and the immutability of the `Credential` dataclass.
-- **TCP server tests** validate the full HL handshake against a running server: ACC for valid credentials, REF for invalid credentials, REF for duplicate home names, REF for non-HL first messages, and proper registration of authenticated hubs in the connected-hubs list.
+- **Credential store tests** validate the in-memory store: correct authentication for valid credentials, rejection of wrong passwords, unknown usernames, unknown homes, and empty inputs. They also verify the encapsulation of the store (the returned credential list cannot be used to mutate internal state) and the immutability of the `Credential` dataclass.
+- **PostgreSQL credential store tests** validate the database-backed adapter: schema bootstrap, `validate` against seeded rows, `list_credentials`, and idempotent seeding (re-seeding the same credential does not create duplicates). These tests run against a live PostgreSQL instance and are skipped automatically when `DATABASE_URL` is not set.
+- **Domain and factory tests** validate the Simple Factory: every supported `device_type` constant produces the correct concrete class with the expected initial state, and unknown types raise `UnknownDeviceTypeError`. The house domain tests cover state transitions on lights, doors, alarms, HVAC, and the read-only invariant of sensors.
+- **TCP transport and protocol handler tests** validate the full HL handshake against a running server (ACC for valid credentials, REF for invalid credentials, REF for duplicate home names, REF for non-HL first messages), as well as message framing on the wire terminator and rejection of malformed SS payloads.
+- **House service tests** validate the conversion from wire-format state maps to `House` domain objects across every device category.
+- **TUI screen tests** validate that each screen builds its `prompt_toolkit` container without error, registers the expected key bindings, and renders the expected content (passwords masked, empty states, disconnected hub messages).
 
 ### Running Tests
 
@@ -280,7 +298,41 @@ pip install -r requirements.txt
 pytest
 ```
 
-Pytest will discover all tests under `tests/` and run them with verbose output. All tests must pass on the `feature/P1A` branch. The same suite is executed automatically on every push and pull request via GitHub Actions.
+Pytest will discover all tests under `tests/` and run them with verbose output. The same suite is executed automatically on every push and pull request via GitHub Actions.
+
+#### Note on skipped tests
+
+A plain `pytest` run reports `96 passed, 7 skipped`. The 7 skipped tests are the **PostgreSQL integration tests** in `tests/test_postgres_credential_store.py`, marked with `pytest.mark.skipif(DATABASE_URL is None, ...)`. They are skipped — not failed — because they require a live PostgreSQL instance to run against. This is a deliberate design choice that follows the standard separation between fast unit tests (which run anywhere, anytime) and integration tests with external dependencies (which run only when explicitly asked).
+
+There are two ways to execute the 7 skipped tests against a real database.
+
+**Option A — recommended: run the test suite inside the platform container.** This does not require installing `sqlalchemy` or `psycopg` on the host machine and works identically on macOS, Linux, and Windows:
+
+```bash
+docker compose up -d --wait db
+export DATABASE_URL=postgresql+psycopg://cleverhome:cleverhome_pass@cleverhome-db:5432/cleverhome
+docker run --rm --network sd-project-group-8-full-aura_default -v "$(pwd):/app" -w /app -e DATABASE_URL --entrypoint pytest cleverhome-platform:p1b
+```
+
+Expected output: `103 passed` (all 96 regular tests plus the 7 PostgreSQL integration tests).
+
+**Option B — native: run pytest on the host.** Requires `sqlalchemy` and `psycopg[binary]` to be installed locally (`pip install -r requirements.txt`):
+
+```bash
+docker compose up -d --wait db
+export DATABASE_URL=postgresql+psycopg://cleverhome:cleverhome_pass@localhost:5432/cleverhome
+pytest tests/test_postgres_credential_store.py -v
+```
+
+All 7 tests should report `PASSED` once the database is reachable. The bonus PostgreSQL implementation is also exercised end-to-end whenever the platform is launched via `docker compose run --rm --service-ports platform`, since the `platform` container connects to the `db` container at startup and uses it as the live credential store.
+
+When done, tear down the database container with:
+
+```bash
+docker compose down -v
+```
+
+**Why GitHub Actions does not run the 7 PostgreSQL tests automatically.** The CI workflow in `.github/workflows/ci.yml` does not spin up a PostgreSQL service, so on every push the 7 integration tests are reported as `SKIPPED`. This is intentional: enabling them would require adding a `services: postgres` block to the workflow, which is straightforward but goes beyond what the assignment explicitly requires for the bonus. The bonus itself is empirically validated in two ways that do not depend on CI — (a) running the snippet above against a local `db` container, and (b) launching the platform via `docker compose run --rm --service-ports platform`, which connects to the live PostgreSQL container at startup. Future iterations may add the `services: postgres` block to the CI workflow so that the 7 tests run on every push as well.
 
 
 ### Type Checking

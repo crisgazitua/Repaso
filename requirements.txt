@@ -1,3 +1,5 @@
 mypy==1.11.2
 pytest==8.3.3
 prompt_toolkit==3.0.52
+psycopg[binary]>=3.2,<4
+sqlalchemy>=2.0,<3

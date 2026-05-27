@@ -1,3 +1,6 @@
+from typing import cast
+
+from src.Domain.device_factory import DeviceFactory
 from src.Domain.house import Alarm, Door, House, HVAC, Light, ProximitySensor
 from src.Server.tcp_server import CleverHomeTCPServer
 
@@ -67,17 +70,55 @@ class HouseService:
         return House(
             name=name,
             temperature=temperature,
-            doors=[Door(i, state[f"DS{i}"] == "1") for i in door_indices],
-            lights=[Light(i, state[f"LS{i}"] == "1") for i in light_indices],
-            proximity_sensors=[
-                ProximitySensor(i, state[f"PS{i}"] == "1") for i in sensor_indices
+            doors=[
+                cast(
+                    Door,
+                    DeviceFactory.create_device(
+                        DeviceFactory.DOOR_LOCK,
+                        index=i,
+                        is_locked=state[f"DS{i}"] == "1",
+                    ),
+                )
+                for i in door_indices
             ],
-            alarm=Alarm(
-                enabled=state.get("AS", "0") == "1",
-                sounding=state.get("AO", "0") == "1",
+            lights=[
+                cast(
+                    Light,
+                    DeviceFactory.create_device(
+                        DeviceFactory.LIGHT,
+                        index=i,
+                        is_on=state[f"LS{i}"] == "1",
+                    ),
+                )
+                for i in light_indices
+            ],
+            proximity_sensors=[
+                cast(
+                    ProximitySensor,
+                    DeviceFactory.create_device(
+                        DeviceFactory.PROXIMITY_SENSOR,
+                        index=i,
+                        motion_detected=state[f"PS{i}"] == "1",
+                    ),
+                )
+                for i in sensor_indices
+            ],
+            alarm=cast(
+                Alarm,
+                DeviceFactory.create_device(
+                    DeviceFactory.ALARM,
+                    index=0,
+                    enabled=state.get("AS", "0") == "1",
+                    sounding=state.get("AO", "0") == "1",
+                ),
             ),
-            hvac=HVAC(
-                heater_on=state.get("HS", "0") == "1",
-                chiller_on=state.get("CS", "0") == "1",
+            hvac=cast(
+                HVAC,
+                DeviceFactory.create_device(
+                    DeviceFactory.HVAC,
+                    index=0,
+                    heater_on=state.get("HS", "0") == "1",
+                    chiller_on=state.get("CS", "0") == "1",
+                ),
             ),
         )

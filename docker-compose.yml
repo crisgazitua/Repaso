@@ -1,12 +1,37 @@
 services:
+  db:
+    image: postgres:16-alpine
+    container_name: cleverhome-db
+    environment:
+      POSTGRES_DB: cleverhome
+      POSTGRES_USER: cleverhome
+      POSTGRES_PASSWORD: cleverhome_pass
+    ports:
+      - "5432:5432"
+    volumes:
+      - cleverhome_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cleverhome -d cleverhome"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   platform:
     build:
       context: .
       dockerfile: Dockerfile
     container_name: cleverhome-platform
-    image: cleverhome-platform:p1a
+    image: cleverhome-platform:p1b
     ports:
       - "9000:9000"
     stdin_open: true
     tty: true
     restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+psycopg://cleverhome:cleverhome_pass@db:5432/cleverhome
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  cleverhome_db_data:
